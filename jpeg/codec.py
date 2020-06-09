@@ -13,7 +13,7 @@ R, G, B = 'r', 'g', 'b'
 Y, CB, CR = 'y', 'cb', 'cr'
 
 
-def rgb2ycbcr(r, g, b):
+def rgbtoycbcr(r, g, b):
     return collections.OrderedDict((
         (Y, + 0.299 * r + 0.587 * g + 0.114 * b),
         (CB, - 0.168736 * r - 0.331264 * g + 0.5 * b),
@@ -43,7 +43,7 @@ def dct2d(arr):
 def quantize(block, block_type, quality=50, inverse=False):
     if block_type == Y:
         quantization_table = LUMINANCE_QUANTIZATION_TABLE
-    else:  # Cb or Cr (LUMINANCE)
+    else:  
         quantization_table = CHROMINANCE_QUANTIZATION_TABLE
     factor = 5000 / quality if quality < 50 else 200 - 2 * quality
     if inverse:
@@ -86,9 +86,7 @@ class Encoder:
     def __init__(self, data, layer_type):
         self.data = data
         self.layer_type = layer_type
-        # List containing differential DCs for multiple blocks.
         self._diff_dc = None
-        # List containing run-length-encoding AC pairs for multiple blocks.
         self._run_length_ac = None
     @property
     def diff_dc(self):
@@ -114,10 +112,8 @@ class Encoder:
                           for v in self.run_length_ac)
         return ret
     def _get_diff_dc(self):
-        """Calculate the differential DC of given data."""
         self._diff_dc = tuple(encode_differential(self.data[:, 0, 0]))
     def _get_run_length_ac(self):
-        """Calculate the run-length-encoded AC of given data."""
         self._run_length_ac = []
         for block in self.data:
             self._run_length_ac.extend(
@@ -618,15 +614,13 @@ def compress(f, size, quality=50, grey_level=False, subsampling_mode=1):
     )
     if grey_level:
         data = {Y: img_arr.astype(float)}
-    else:  # RGB
-        # Color Space Conversion (w/o Level Offset)
-        data = rgb2ycbcr(*(img_arr[:, :, idx] for idx in range(3)))
+    else: 
+        data = rgbtoycbcr(*(img_arr[:, :, idx] for idx in range(3)))
         data[CB] = downsample(data[CB], subsampling_mode)
         data[CR] = downsample(data[CR], subsampling_mode)
     data[Y] = data[Y] - 128
     for key, layer in data.items():
         nrows, ncols = layer.shape
-        # Pad Layers to 8N * 8N
         data[key] = np.pad(
             layer,
             (
@@ -635,20 +629,16 @@ def compress(f, size, quality=50, grey_level=False, subsampling_mode=1):
             ),
             mode='constant'
         )
-        # Block Slicing
         data[key] = block_slice(data[key], 8, 8)
         for idx, block in enumerate(data[key]):
             # 2D DCT
             data[key][idx] = dct2d(block)
             # Quantization
             data[key][idx] = quantize(data[key][idx], key, quality=quality)
-        # Rounding
         data[key] = np.rint(data[key]).astype(int)
     if grey_level:
         # Entropy Encoder
         encoded = Encoder(data[Y], LUMINANCE).encode()
-        # Combine grey level data as binary in the order:
-        #   DC, AC
         order = (encoded[DC], encoded[AC])
     else:  # RGB
         # Entropy Encoder
@@ -659,8 +649,6 @@ def compress(f, size, quality=50, grey_level=False, subsampling_mode=1):
                 CHROMINANCE
             ).encode()
         }
-        # Combine RGB data as binary in the order:
-        #   LUMINANCE.DC, LUMINANCE.AC, CHROMINANCE.DC, CHROMINANCE.AC
         order = (encoded[LUMINANCE][DC], encoded[LUMINANCE][AC],
                  encoded[CHROMINANCE][DC], encoded[CHROMINANCE][AC])
     bits = bitarray(''.join(order))
@@ -674,45 +662,8 @@ def compress(f, size, quality=50, grey_level=False, subsampling_mode=1):
             'grey_level': grey_level,
             'quality': quality,
             'subsampling_mode': subsampling_mode,
-            # Remaining bits length is the fake filled bits for 8 bits as a
-            # byte.
             'remaining_bits_length': bits2bytes(len(bits)) * 8 - len(bits),
             'data_slice_lengths': tuple(len(d) for d in order)
         }
     }
-
-
-
-
-
-
-
-
-def psnr(data1, data2, max_pixel=255):
-    mse = np.mean((data1 - data2) ** 2)
-    if mse:
-        return 20 * math.log10(max_pixel / mse ** 0.5)
-    return math.inf
-
-
-def show_raw_images(images, sizes, titles=None, grey_level=False):
-    if titles is None:
-        titles = range(len(images))
-    _, axarr = plt.subplots(1, len(images))
-    for idx, (img, size, title) in enumerate(zip(images, sizes, titles)):
-        if isinstance(img, str):
-            with open(img, 'rb') as img_file:
-                arr = np.fromfile(img_file, dtype=np.uint8)
-        else:
-            arr = np.array(img)
-        arr.shape = size if grey_level else (*size, 3)
-        if len(images) == 1:
-            axarr.set_title(title)
-            axarr.imshow(arr, cmap='gray', vmin=0, vmax=255)
-        else:
-            axarr[idx].set_title(title)
-            axarr[idx].imshow(arr, cmap='gray', vmin=0, vmax=255)
-    plt.show()
-
-
 
